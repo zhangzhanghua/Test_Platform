@@ -1,0 +1,85 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: test_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - bug_uploads:/app/uploads/bugs
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/test_platform
+      SYNC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/test_platform
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    build: ./backend
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    volumes:
+      - ./backend:/app
+      - bug_uploads:/app/uploads/bugs
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/test_platform
+      SYNC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/test_platform
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  pgdata:
+  bug_uploads:
